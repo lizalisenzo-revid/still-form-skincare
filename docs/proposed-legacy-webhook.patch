@@ -1,0 +1,32 @@
+diff --git a/supabase/functions/yoco-webhook/index.ts b/supabase/functions/yoco-webhook/index.ts
+--- a/supabase/functions/yoco-webhook/index.ts
++++ b/supabase/functions/yoco-webhook/index.ts
+@@ -165,6 +165,28 @@ Deno.serve(async (req) => {
+     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+   );
+ 
++  // Account-wide Yoco webhooks can receive events from another storefront.
++  // Apply only AFTER the additive commerce schema is approved and installed.
++  const routedPayload = body?.payload ?? body?.data ?? {};
++  const routedMeta = routedPayload?.metadata ?? {};
++  if (routedMeta.storeId && routedMeta.storeId !== "revid") {
++    return new Response(JSON.stringify({ ok: true, ignored: "other-store" }),
++      { status: 200, headers: corsHeaders });
++  }
++  if (routedMeta.checkoutId) {
++    const { data: commerceOrder, error: routingError } = await supabase
++      .from("commerce_orders").select("store_id")
++      .eq("checkout_id", routedMeta.checkoutId).maybeSingle();
++    // Retry rather than sending another store's raw event to RevID recipients.
++    if (routingError) {
++      return new Response(JSON.stringify({ ok: false, error: "routing unavailable" }),
++        { status: 503, headers: corsHeaders });
++    }
++    if (commerceOrder && commerceOrder.store_id !== "revid") {
++      return new Response(JSON.stringify({ ok: true, ignored: "other-store" }),
++        { status: 200, headers: corsHeaders });
++    }
++  }
+   const data = body?.data ?? body?.payment ?? body?.checkout ?? body ?? {};
+   const nestedMeta =
+     data?.metadata ??
